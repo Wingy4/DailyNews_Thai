@@ -1,39 +1,64 @@
 # -*- coding: utf-8 -*-
 """
-Утренний новостной дайджест по Таиланду и ЮВА.
-Собирает новости (Google News RSS) и общественные интересы (Google Trends RSS),
-пересказывает по-русски через GPT-5.4 Nano и отправляет в телеграм-канал.
-Запускается один раз в сутки по расписанию Railway.
+Утренний дайджест по Таиланду и ЮВА.
+Основа: англоязычная аналитика (Bangkok Post, Nation Thailand).
+Контроль охвата: тайский Google News.
+Общественный интерес: Google Trends по реальной выборке, с пояснениями
+через связанные новости, которые сама лента отдаёт вместе с каждым трендом.
+Пересказ по-русски через выбранную модель. Запуск раз в сутки по расписанию Railway.
 """
 
 import os
+import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
 import feedparser
 import requests
 from openai import OpenAI
 
-# ── Настройки приходят из переменных окружения Railway ──────────────
+# ── Настройки из переменных окружения Railway ──────────────
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "")
-MODEL = os.environ.get("MODEL", "gpt-5.4-nano")
+MODEL = os.environ.get("MODEL", "gpt-5.4-mini")
 
-HOURS_BACK = 30  # какие новости считать свежими
+HOURS_BACK = 30
+MAX_PER_FEED = 12
+MAX_THAI_PER_FEED = 12
+MAX_TRENDS = 15
 
-NEWS_FEEDS = {
-    "Политика": "https://news.google.com/rss/search?q=%E0%B8%81%E0%B8%B2%E0%B8%A3%E0%B9%80%E0%B8%A1%E0%B8%B7%E0%B8%AD%E0%B8%87+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th",
-    "Экономика": "https://news.google.com/rss/search?q=%E0%B9%80%E0%B8%A8%E0%B8%A3%E0%B8%A9%E0%B8%90%E0%B8%81%E0%B8%B4%E0%B8%88+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th",
-    "Международные": "https://news.google.com/rss/search?q=%E0%B8%95%E0%B9%88%E0%B8%B2%E0%B8%87%E0%B8%9B%E0%B8%A3%E0%B8%B0%E0%B9%80%E0%B8%97%E0%B8%A8+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th",
-    "АСЕАН": "https://news.google.com/rss/search?q=%E0%B8%AD%E0%B8%B2%E0%B9%80%E0%B8%8B%E0%B8%B5%E0%B8%A2%E0%B8%99&hl=th&gl=TH&ceid=TH:th",
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 }
+
+# Англоязычная аналитика — основа дайджеста
+ENGLISH_FEEDS = [
+    ("Bangkok Post — Таиланд", "https://www.bangkokpost.com/rss/data/thailand"),
+    ("Bangkok Post — Бизнес", "https://www.bangkokpost.com/rss/data/business"),
+    ("Bangkok Post — Мир", "https://www.bangkokpost.com/rss/data/world"),
+    ("Nation Thailand", "https://www.nationthailand.com/rss"),
+]
+
+# Тайский Google News — контроль охвата
+THAI_FEEDS = [
+    ("การเมือง", "https://news.google.com/rss/search?q=%E0%B8%81%E0%B8%B2%E0%B8%A3%E0%B9%80%E0%B8%A1%E0%B8%B7%E0%B8%AD%E0%B8%87+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th"),
+    ("เศรษฐกิจ", "https://news.google.com/rss/search?q=%E0%B9%80%E0%B8%A8%E0%B8%A3%E0%B8%A9%E0%B8%90%E0%B8%81%E0%B8%B4%E0%B8%88+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th"),
+    ("ต่างประเทศ", "https://news.google.com/rss/search?q=%E0%B8%95%E0%B9%88%E0%B8%B2%E0%B8%87%E0%B8%9B%E0%B8%A3%E0%B8%B0%E0%B9%80%E0%B8%97%E0%B8%A8+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th"),
+    ("อาเซียน", "https://news.google.com/rss/search?q=%E0%B8%AD%E0%B8%B2%E0%B9%80%E0%B8%8B%E0%B8%B5%E0%B8%A2%E0%B8%99&hl=th&gl=TH&ceid=TH:th"),
+]
 
 TRENDS_FEED = "https://trends.google.com/trending/rss?geo=TH"
 
-MAX_PER_FEED = 15
-MAX_TRENDS = 15
+
+def strip_html(text):
+    """Убирает html-теги и лишние пробелы из описания."""
+    text = re.sub(r"<[^>]+>", " ", text or "")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def is_fresh(entry, hours=HOURS_BACK):
@@ -44,101 +69,147 @@ def is_fresh(entry, hours=HOURS_BACK):
     return datetime.now(timezone.utc) - pub <= timedelta(hours=hours)
 
 
-def clean_source(entry):
+def entry_source(entry):
     src = getattr(entry, "source", None)
     if src and getattr(src, "title", None):
         return src.title
     return ""
 
 
-def fetch_news():
+def fetch_feed_items(feeds, limit, with_desc):
+    """Собирает свежие записи из списка лент."""
     items = []
-    for topic, url in NEWS_FEEDS.items():
+    for origin, url in feeds:
         try:
-            feed = feedparser.parse(url)
+            feed = feedparser.parse(url, agent=HEADERS["User-Agent"])
         except Exception as e:
-            print(f"[warn] лента '{topic}' не загрузилась: {e}", file=sys.stderr)
+            print(f"[warn] лента '{origin}' не загрузилась: {e}", file=sys.stderr)
             continue
         count = 0
         for entry in feed.entries:
-            if count >= MAX_PER_FEED:
+            if count >= limit:
                 break
             if not is_fresh(entry):
                 continue
-            items.append({
-                "topic": topic,
+            item = {
+                "origin": origin,
                 "title": getattr(entry, "title", "").strip(),
                 "link": getattr(entry, "link", "").strip(),
-                "source": clean_source(entry),
-            })
+                "source": entry_source(entry),
+            }
+            if with_desc:
+                desc = strip_html(getattr(entry, "summary", "") or getattr(entry, "description", ""))
+                item["desc"] = desc[:600]
+            items.append(item)
             count += 1
+        print(f"  {origin}: {count}", file=sys.stderr)
     return items
 
 
 def fetch_trends():
+    """
+    Тянет тренды Google Trends вместе со связанными новостями.
+    Разбор идёт напрямую по xml, чтобы не потерять несколько новостей на тренд
+    (feedparser склеивает повторяющиеся элементы и оставляет только последний).
+    """
     trends = []
     try:
-        feed = feedparser.parse(TRENDS_FEED)
+        r = requests.get(TRENDS_FEED, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
     except Exception as e:
         print(f"[warn] тренды не загрузились: {e}", file=sys.stderr)
         return trends
-    for entry in feed.entries[:MAX_TRENDS]:
-        traffic = ""
-        for key in ("ht_approx_traffic", "approx_traffic"):
-            if hasattr(entry, key):
-                traffic = getattr(entry, key)
-                break
-        trends.append({
-            "title": getattr(entry, "title", "").strip(),
-            "traffic": traffic,
-        })
+
+    def local(tag):
+        return tag.split("}")[-1]
+
+    for item in root.iter():
+        if local(item.tag) != "item":
+            continue
+        term, traffic, related = "", "", []
+        for child in item:
+            name = local(child.tag)
+            if name == "title":
+                term = (child.text or "").strip()
+            elif name == "approx_traffic":
+                traffic = (child.text or "").strip()
+            elif name == "news_item":
+                nt = nu = nsrc = ""
+                for sub in child:
+                    sname = local(sub.tag)
+                    if sname == "news_item_title":
+                        nt = (sub.text or "").strip()
+                    elif sname == "news_item_url":
+                        nu = (sub.text or "").strip()
+                    elif sname == "news_item_source":
+                        nsrc = (sub.text or "").strip()
+                if nt or nu:
+                    related.append({"title": nt, "url": nu, "source": nsrc})
+        if term:
+            trends.append({"term": term, "traffic": traffic, "related": related})
+        if len(trends) >= MAX_TRENDS:
+            break
     return trends
 
 
-def build_prompt(news, trends):
-    news_lines = []
-    for i, n in enumerate(news, 1):
-        src = f" | источник: {n['source']}" if n["source"] else ""
-        news_lines.append(f"{i}. [{n['topic']}] {n['title']}{src}\n   ссылка: {n['link']}")
-    news_block = "\n".join(news_lines) if news_lines else "(новостей нет)"
+def build_user_message(english, thai, trends):
+    en_lines = []
+    for i, n in enumerate(english, 1):
+        desc = f"\n   суть: {n['desc']}" if n.get("desc") else ""
+        en_lines.append(f"{i}. [{n['origin']}] {n['title']}{desc}\n   ссылка: {n['link']}")
+    en_block = "\n".join(en_lines) if en_lines else "(нет данных)"
 
-    trend_lines = []
+    th_lines = []
+    for i, n in enumerate(thai, 1):
+        src = f" | {n['source']}" if n["source"] else ""
+        th_lines.append(f"{i}. [{n['origin']}] {n['title']}{src}\n   ссылка: {n['link']}")
+    th_block = "\n".join(th_lines) if th_lines else "(нет данных)"
+
+    tr_lines = []
     for i, t in enumerate(trends, 1):
         tr = f" (~{t['traffic']})" if t["traffic"] else ""
-        trend_lines.append(f"{i}. {t['title']}{tr}")
-    trends_block = "\n".join(trend_lines) if trend_lines else "(трендов нет)"
-    return news_block, trends_block
+        head = f"{i}. {t['term']}{tr}"
+        if t["related"]:
+            for rn in t["related"][:3]:
+                src = f" [{rn['source']}]" if rn["source"] else ""
+                head += f"\n   связано: {rn['title']}{src} {rn['url']}"
+        else:
+            head += "\n   связано: (связанных новостей нет)"
+        tr_lines.append(head)
+    tr_block = "\n".join(tr_lines) if tr_lines else "(нет данных)"
 
-
-SYSTEM_PROMPT = """Ты — редактор утреннего новостного дайджеста о Таиланде и Юго-Восточной Азии для русскоязычного читателя.
-
-Тебе дают сырой список тайских новостей (заголовки на тайском со ссылками, сгруппированные по темам) и список поисковых трендов Таиланда.
-
-Собери связный дайджест НА РУССКОМ ЯЗЫКЕ по правилам:
-
-1. Сгруппируй новости в сюжеты. Если несколько заголовков об одном событии — объедини в один пункт, а все ссылки перечисли вместе.
-2. ПРИОРИТЕТ — сюжетам, подтверждённым несколькими источниками: ставь их выше и раскрывай подробнее.
-3. Раздели дайджест на разделы: Политика, Экономика, Международные отношения. Всё, что не относится к этим темам (спорт, шоу-бизнес, происшествия), в новостную часть не включай.
-4. Каждый пункт — краткий пересказ СВОИМИ СЛОВАМИ (2–4 предложения), НЕ копируй заголовки дословно. К каждому пункту дай ссылки в формате HTML: <a href="URL">издание</a>.
-5. В конце — отдельный блок «Что ищут в Таиланде» на основе трендов. Раздели тренды по категориям (политика, экономика, спорт, шоу-бизнес, другое) и коротко поясни каждый. Пиши честно, даже если общество смотрит футбол или сериалы.
-
-Оформление для Telegram:
-- HTML-теги: <b>жирный</b> для заголовков разделов, <a href="">ссылки</a>.
-- Кавычки — только ёлочки «вот такие».
-- Тире не используй как знак паузы или выделения.
-- Не выдумывай факты, которых нет в заголовках.
-- Пиши живым человеческим языком, без канцелярита."""
-
-
-def generate_digest(news, trends):
-    news_block, trends_block = build_prompt(news, trends)
     today = datetime.now(timezone(timedelta(hours=7))).strftime("%d.%m.%Y")
-    user_msg = (
+    return (
         f"Дата дайджеста: {today} (утро по Бангкоку).\n\n"
-        f"=== НОВОСТИ ===\n{news_block}\n\n"
-        f"=== ПОИСКОВЫЕ ТРЕНДЫ ТАИЛАНДА ===\n{trends_block}\n\n"
-        f"Собери дайджест по правилам."
+        f"=== АНГЛОЯЗЫЧНАЯ АНАЛИТИКА (основа дайджеста) ===\n{en_block}\n\n"
+        f"=== ТАЙСКАЯ ЛЕНТА (контроль охвата) ===\n{th_block}\n\n"
+        f"=== ТРЕНДЫ GOOGLE СО СВЯЗАННЫМИ НОВОСТЯМИ ===\n{tr_block}\n\n"
+        f"Собери дайджест по правилам из системной инструкции."
     )
+
+
+SYSTEM_PROMPT = """Ты — редактор утреннего дайджеста о Таиланде и Юго-Восточной Азии для русскоязычного читателя. Пишешь НА РУССКОМ.
+
+Тебе дают три блока: англоязычную аналитику (основа), тайскую ленту Google News (для контроля охвата) и поисковые тренды Google со связанными новостями.
+
+ПРАВИЛА ДАЙДЖЕСТА:
+
+1. Основную часть строй по англоязычной аналитике. У этих новостей есть поле «суть» с фактурой — опирайся на неё, приводи конкретику (имена, цифры, суммы, места), а не общие слова.
+2. Группируй в сюжеты. Если одно событие освещают несколько источников, объедини и дай приоритет: ставь такой сюжет выше и раскрывай подробнее, все ссылки перечисли вместе.
+3. Раздели на разделы: <b>Политика</b>, <b>Экономика</b>, <b>Международные отношения</b>. Каждый пункт — пересказ СВОИМИ СЛОВАМИ на 2–4 предложения, без копирования заголовков. Ссылки давай в формате <a href="URL">издание</a>.
+4. Затем раздел <b>Чего нет в англоязычных СМИ</b>: пройдись по тайской ленте и коротко назови сюжеты, которые есть там, но которых нет в англоязычной части. Это показывает, что внутренняя тайская повестка освещает, а международные издания пропускают. Если таких расхождений нет, честно напиши, что повестки совпали.
+5. Раздел <b>Что ищут в Таиланде</b> по трендам. Бери РЕАЛЬНЫЕ запросы как есть, ничего не приглаживая. Поясняй каждый тренд ТОЛЬКО через связанные новости, которые к нему приложены. Если связанных новостей нет или смысл запроса неясен, так и напиши («повод неясен»), НЕ придумывай объяснение. Раскидай тренды по категориям (политика, экономика, спорт, шоу-бизнес, погода, другое). Если общество массово ищет футбол или сериалы, пиши это прямо, без стеснения.
+
+ОФОРМЛЕНИЕ (Telegram HTML):
+- Теги: <b>жирный</b> для заголовков разделов, <a href="">ссылки</a>. Другие теги не используй.
+- Кавычки — только ёлочки «вот такие».
+- Тире не используй как знак паузы или выделения. Ставь только там, где этого требует грамматика.
+- Не выдумывай факты, которых нет во входных данных. Пиши живым языком, без канцелярита."""
+
+
+def generate_digest(english, thai, trends):
+    user_msg = build_user_message(english, thai, trends)
     client = OpenAI(api_key=OPENAI_API_KEY)
     resp = client.chat.completions.create(
         model=MODEL,
@@ -190,20 +261,24 @@ def main():
         print(f"[error] не заданы переменные: {', '.join(missing)}", file=sys.stderr)
         sys.exit(1)
 
-    print("Собираю новости...")
-    news = fetch_news()
-    print(f"Найдено новостей: {len(news)}")
+    print("Собираю англоязычную аналитику...")
+    english = fetch_feed_items(ENGLISH_FEEDS, MAX_PER_FEED, with_desc=True)
+    print(f"Англоязычных новостей: {len(english)}")
+
+    print("Собираю тайскую ленту для контроля...")
+    thai = fetch_feed_items(THAI_FEEDS, MAX_THAI_PER_FEED, with_desc=False)
+    print(f"Тайских новостей: {len(thai)}")
 
     print("Собираю тренды...")
     trends = fetch_trends()
-    print(f"Найдено трендов: {len(trends)}")
+    print(f"Трендов: {len(trends)}")
 
-    if not news and not trends:
+    if not english and not thai and not trends:
         print("[warn] нет данных, дайджест не отправлен")
         return
 
-    print("Пишу дайджест...")
-    digest = generate_digest(news, trends)
+    print(f"Пишу дайджест на модели {MODEL}...")
+    digest = generate_digest(english, thai, trends)
 
     print("Отправляю в Telegram...")
     send_to_telegram(digest)
