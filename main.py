@@ -37,10 +37,13 @@ HEADERS = {
 
 # Англоязычная аналитика — основа дайджеста
 ENGLISH_FEEDS = [
-    ("Bangkok Post — Таиланд", "https://www.bangkokpost.com/rss/data/thailand"),
-    ("Bangkok Post — Бизнес", "https://www.bangkokpost.com/rss/data/business"),
-    ("Bangkok Post — Мир", "https://www.bangkokpost.com/rss/data/world"),
-    ("Nation Thailand", "https://www.nationthailand.com/rss"),
+    ("Bangkok Post — Таиланд", "https://www.bangkokpost.com/rss/data/thailand.xml"),
+    ("Bangkok Post — Бизнес", "https://www.bangkokpost.com/rss/data/business.xml"),
+    ("Bangkok Post — Мир", "https://www.bangkokpost.com/rss/data/world.xml"),
+    ("Политика (Таиланд)", "https://news.google.com/rss/search?q=Thailand+politics&hl=en-US&gl=TH&ceid=TH:en"),
+    ("Экономика (Таиланд)", "https://news.google.com/rss/search?q=Thailand+economy&hl=en-US&gl=TH&ceid=TH:en"),
+    ("Международные (Таиланд)", "https://news.google.com/rss/search?q=Thailand+foreign+relations&hl=en-US&gl=TH&ceid=TH:en"),
+    ("АСЕАН", "https://news.google.com/rss/search?q=ASEAN&hl=en-US&gl=SG&ceid=SG:en"),
 ]
 
 # Тайский Google News — контроль охвата
