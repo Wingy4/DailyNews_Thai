@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Утренний дайджест по Таиланду и ЮВА.
-Основа: англоязычная аналитика (Bangkok Post, Nation Thailand).
+Основа: английский Google News ( с приоритетом на Bangkok Post, Nation Thailand и т.д).
 Контроль охвата: тайский Google News.
 Общественный интерес: Google Trends по реальной выборке, с пояснениями
 через связанные новости, которые сама лента отдаёт вместе с каждым трендом.
@@ -56,6 +56,17 @@ THAI_FEEDS = [
 
 TRENDS_FEED = "https://trends.google.com/trending/rss?geo=TH"
 
+MONTHS_RU = ["января", "февраля", "марта", "апреля", "мая", "июня",
+             "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+WEEKDAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+
+
+def format_date_header():
+    """Строка с сегодняшней датой по Бангкоку, для самой первой строки дайджеста."""
+    now = datetime.now(timezone(timedelta(hours=7)))
+    weekday = WEEKDAYS_RU[now.weekday()]
+    month = MONTHS_RU[now.month - 1]
+    return f"<b>{now.day} {month} {now.year}, {weekday}</b>"
 
 def strip_html(text):
     """Убирает html-теги и лишние пробелы из описания."""
@@ -282,6 +293,7 @@ def main():
 
     print(f"Пишу дайджест на модели {MODEL}...")
     digest = generate_digest(english, thai, trends)
+    digest = f"{format_date_header()}\n\n{digest}"
 
     print("Отправляю в Telegram...")
     send_to_telegram(digest)
