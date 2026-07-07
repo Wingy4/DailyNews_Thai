@@ -368,7 +368,7 @@ def main():
 
     print("Собираю тренды...")
     trends = fetch_trends()
-    print(f"Трендов: {len(trends)}")}")
+    print(f"Трендов: {len(trends)}")
 
     if not english and not thai and not trends:
         print("[warn] нет данных, дайджест не отправлен")
