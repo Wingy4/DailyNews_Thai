@@ -24,6 +24,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "")
 MODEL = os.environ.get("MODEL", "gpt-5.4-mini")
+TEST_MODE = os.environ.get("TEST_MODE", "false").lower() == "true"
 
 HOURS_BACK = 30
 MAX_PER_FEED = 12
@@ -55,6 +56,31 @@ THAI_FEEDS = [
 ]
 
 TRENDS_FEED = "https://trends.google.com/trending/rss?geo=TH"
+
+YOUTUBE_FEEDS = [
+    ("Ch7HD News", "https://www.youtube.com/feeds/videos.xml?channel_id=UC2OtDM92rLjt4mm43ED1Q-w"),
+    ("Workpoint News 23", "https://www.youtube.com/feeds/videos.xml?channel_id=UC3WyfUir0HD8sFI4AVAl6SQ"),
+    ("ThaiPBS News", "https://www.youtube.com/feeds/videos.xml?channel_id=UCOFvLl4bKwCIZg0r4EBQLug"),
+    ("THE STANDARD", "https://www.youtube.com/feeds/videos.xml?channel_id=UCk1v3FzlMu3r34LYgoHpH2w"),
+    ("Thairath News", "https://www.youtube.com/feeds/videos.xml?channel_id=UCrFDdD-EE05N7gjwZho2wqw"),
+    ("Nation Online", "https://www.youtube.com/feeds/videos.xml?channel_id=UCIoFfVIOrRRbI-WVdDhTTwg"),
+]
+
+# Этот канал не фильтруем по ключевым словам — берём все его ролики как есть
+YOUTUBE_FEEDS_NO_FILTER = [
+    ("โหนกระแส", "https://www.youtube.com/feeds/videos.xml?channel_id=UCXm0bpjlfB0AF-ZdPhT0K1A"),
+]
+
+# Слова-маркеры аналитических программ и обсуждений в заголовках роликов
+ANALYSIS_KEYWORDS = [
+    "เจาะประเด็น", "วิเคราะห์", "ถกประเด็น", "เจาะลึก",
+    "มุมมอง", "สนทนา", "เปิดประเด็น", "ดีเบต", "พูดคุย",
+    "โหนกระแส", "ติ่งข่าว",
+]
+
+def is_analysis(title):
+    """Проверяет, похож ли заголовок ролика на аналитику или обсуждение."""
+    return any(word in title for word in ANALYSIS_KEYWORDS)
 
 MONTHS_RU = ["января", "февраля", "марта", "апреля", "мая", "июня",
              "июля", "августа", "сентября", "октября", "ноября", "декабря"]
@@ -166,6 +192,56 @@ def fetch_trends():
             break
     return trends
 
+def fetch_youtube_items():
+    """Собирает ролики новостных каналов, помечая аналитику отдельно."""
+    items = []
+
+    # Обычные каналы: фильтруем по ключевым словам, но не выбрасываем остальное
+    for origin, url in YOUTUBE_FEEDS:
+        try:
+            feed = feedparser.parse(url, agent=HEADERS["User-Agent"])
+        except Exception as e:
+            print(f"[warn] лента '{origin}' не загрузилась: {e}", file=sys.stderr)
+            continue
+        count = 0
+        for entry in feed.entries:
+            if count >= MAX_PER_FEED:
+                break
+            if not is_fresh(entry):
+                continue
+            title = getattr(entry, "title", "").strip()
+            items.append({
+                "origin": origin,
+                "title": title,
+                "link": getattr(entry, "link", "").strip(),
+                "tag": "аналитика/обсуждение" if is_analysis(title) else "обычный сюжет",
+            })
+            count += 1
+        print(f"  {origin}: {count}", file=sys.stderr)
+
+    # โหนกระแส: берём все ролики без фильтра
+    for origin, url in YOUTUBE_FEEDS_NO_FILTER:
+        try:
+            feed = feedparser.parse(url, agent=HEADERS["User-Agent"])
+        except Exception as e:
+            print(f"[warn] лента '{origin}' не загрузилась: {e}", file=sys.stderr)
+            continue
+        count = 0
+        for entry in feed.entries:
+            if count >= MAX_PER_FEED:
+                break
+            if not is_fresh(entry):
+                continue
+            items.append({
+                "origin": origin,
+                "title": getattr(entry, "title", "").strip(),
+                "link": getattr(entry, "link", "").strip(),
+                "tag": "аналитика/обсуждение",
+            })
+            count += 1
+        print(f"  {origin}: {count}", file=sys.stderr)
+
+    return items
 
 def build_user_message(english, thai, trends):
     en_lines = []
@@ -295,8 +371,12 @@ def main():
     digest = generate_digest(english, thai, trends)
     digest = f"{format_date_header()}\n\n{digest}"
 
-    print("Отправляю в Telegram...")
-    send_to_telegram(digest)
+    if TEST_MODE:
+        print("=== ТЕСТОВЫЙ РЕЖИМ, В TELEGRAM НЕ ОТПРАВЛЯЮ ===")
+        print(digest)
+    else:
+        print("Отправляю в Telegram...")
+        send_to_telegram(digest)
     print("Готово.")
 
 
