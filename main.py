@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Утренний дайджест по Таиланду и ЮВА.
-Основа: английский Google News ( с приоритетом на Bangkok Post, Nation Thailand и т.д).
-Контроль охвата: тайский Google News.
+Основа: английский новости (с приоритетом на Bangkok Post, и т.д).
+Контроль охвата: тайский Google News + ютуб + пара новостных сайтов.
 Общественный интерес: Google Trends по реальной выборке, с пояснениями
 через связанные новости, которые сама лента отдаёт вместе с каждым трендом.
 Пересказ по-русски через выбранную модель. Запуск раз в сутки по расписанию Railway.
@@ -41,18 +41,23 @@ ENGLISH_FEEDS = [
     ("Bangkok Post — Таиланд", "https://www.bangkokpost.com/rss/data/thailand.xml"),
     ("Bangkok Post — Бизнес", "https://www.bangkokpost.com/rss/data/business.xml"),
     ("Bangkok Post — Мир", "https://www.bangkokpost.com/rss/data/world.xml"),
+    ("Khaosod English", "https://www.khaosodenglish.com/feed"),
+    ("The Diplomat", "https://thediplomat.com/feed/"),
+    ("East Asia Forum", "https://eastasiaforum.org/feed"),
     ("Политика (Таиланд)", "https://news.google.com/rss/search?q=Thailand+politics&hl=en-US&gl=TH&ceid=TH:en"),
     ("Экономика (Таиланд)", "https://news.google.com/rss/search?q=Thailand+economy&hl=en-US&gl=TH&ceid=TH:en"),
     ("Международные (Таиланд)", "https://news.google.com/rss/search?q=Thailand+foreign+relations&hl=en-US&gl=TH&ceid=TH:en"),
     ("АСЕАН", "https://news.google.com/rss/search?q=ASEAN&hl=en-US&gl=SG&ceid=SG:en"),
 ]
 
-# Тайский Google News — контроль охвата
+# Тайские новости для контроля
 THAI_FEEDS = [
     ("การเมือง", "https://news.google.com/rss/search?q=%E0%B8%81%E0%B8%B2%E0%B8%A3%E0%B9%80%E0%B8%A1%E0%B8%B7%E0%B8%AD%E0%B8%87+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th"),
     ("เศรษฐกิจ", "https://news.google.com/rss/search?q=%E0%B9%80%E0%B8%A8%E0%B8%A3%E0%B8%A9%E0%B8%90%E0%B8%81%E0%B8%B4%E0%B8%88+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th"),
     ("ต่างประเทศ", "https://news.google.com/rss/search?q=%E0%B8%95%E0%B9%88%E0%B8%B2%E0%B8%87%E0%B8%9B%E0%B8%A3%E0%B8%B0%E0%B9%80%E0%B8%97%E0%B8%A8+%E0%B9%84%E0%B8%97%E0%B8%A2&hl=th&gl=TH&ceid=TH:th"),
     ("อาเซียน", "https://news.google.com/rss/search?q=%E0%B8%AD%E0%B8%B2%E0%B9%80%E0%B8%8B%E0%B8%B5%E0%B8%A2%E0%B8%99&hl=th&gl=TH&ceid=TH:th"),
+    ("Matichon", "https://www.matichon.co.th/feed"),
+    ("Prachachat Thurakij", "https://www.prachachat.net/feed"),
 ]
 
 TRENDS_FEED = "https://trends.google.com/trending/rss?geo=TH"
@@ -359,7 +364,7 @@ def main():
     print(f"Англоязычных новостей: {len(english)}")
 
     print("Собираю тайскую ленту для контроля...")
-    thai = fetch_feed_items(THAI_FEEDS, MAX_THAI_PER_FEED, with_desc=False)
+    thai = fetch_feed_items(THAI_FEEDS, MAX_THAI_PER_FEED, with_desc=True)
     print(f"Тайских новостей: {len(thai)}")
 
     print("Собираю ролики новостных каналов на ютубе...")
